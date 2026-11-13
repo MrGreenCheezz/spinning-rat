@@ -1,0 +1,605 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Вращающаяся крыса</title>
+<style>
+  :root {
+    --bg: #050506;
+    --fg: #f4f1ea;
+    --dim: #9a96a3;
+    --accent: #f7c948;
+    --panel: rgba(18, 18, 22, .74);
+    --line: rgba(255, 255, 255, .12);
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; overflow: hidden; }
+  body {
+    color: var(--fg);
+    font-family: system-ui, "Segoe UI", Roboto, sans-serif;
+    background: radial-gradient(ellipse at 50% 58%, #1d1c26 0%, #0a0a0e 55%, #020203 100%) var(--bg);
+    -webkit-user-select: none; user-select: none;
+  }
+  canvas#scene {
+    position: fixed; inset: 0; width: 100%; height: 100%;
+    display: block; touch-action: none; cursor: grab;
+  }
+  canvas#scene.dragging { cursor: grabbing; }
+
+  header {
+    position: fixed; top: 0; left: 0; right: 0;
+    padding: clamp(14px, 3.5vh, 36px) 16px 0;
+    text-align: center; pointer-events: none;
+  }
+  h1 {
+    margin: 0;
+    font-family: Impact, "Arial Narrow Bold", "Haettenschweiler", sans-serif;
+    font-weight: 400;
+    font-size: clamp(30px, 6.4vw, 76px);
+    line-height: 1;
+    letter-spacing: .035em;
+    text-transform: uppercase;
+    text-shadow: 0 2px 0 #000, 0 0 28px rgba(0, 0, 0, .8);
+  }
+  .stats {
+    margin-top: clamp(8px, 1.6vh, 16px);
+    display: inline-flex; align-items: baseline; gap: 10px;
+    font-size: 13px; letter-spacing: .14em; text-transform: uppercase;
+    color: var(--dim);
+  }
+  .stats b {
+    font-family: Consolas, "SF Mono", Menlo, monospace;
+    font-variant-numeric: tabular-nums;
+    font-size: clamp(22px, 3.4vw, 34px);
+    font-weight: 700; letter-spacing: 0;
+    color: var(--accent);
+  }
+  .stats .sep { opacity: .4; }
+  .stats span.live {
+    font-family: Consolas, "SF Mono", Menlo, monospace;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: .04em; text-transform: none; color: var(--fg);
+  }
+
+  footer {
+    position: fixed; left: 0; right: 0; bottom: 0;
+    padding: 0 16px clamp(14px, 3vh, 28px);
+    display: flex; flex-direction: column; align-items: center; gap: 10px;
+    pointer-events: none;
+  }
+  .hint {
+    font-size: 13px; color: var(--dim);
+    text-shadow: 0 1px 6px #000, 0 0 12px #000;
+    transition: opacity .6s;
+  }
+  .hint.gone { opacity: 0; }
+  .panel {
+    pointer-events: auto;
+    display: flex; flex-wrap: wrap; align-items: center; justify-content: center;
+    gap: 10px 12px;
+    max-width: 100%;
+    padding: 10px 12px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    backdrop-filter: blur(10px);
+  }
+  button {
+    font: inherit; font-size: 14px; color: var(--fg);
+    height: 38px; padding: 0 14px;
+    background: rgba(255, 255, 255, .05);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    cursor: pointer; white-space: nowrap;
+    transition: background .15s, border-color .15s, color .15s;
+  }
+  button:hover { background: rgba(255, 255, 255, .11); }
+  button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  button[aria-pressed="true"] {
+    color: #17130a; background: var(--accent); border-color: var(--accent);
+  }
+  .speed {
+    display: flex; align-items: center; gap: 10px;
+    font-size: 13px; color: var(--dim);
+    padding: 0 4px;
+  }
+  .speed output {
+    min-width: 76px; text-align: right; color: var(--fg);
+    font-family: Consolas, "SF Mono", Menlo, monospace;
+    font-variant-numeric: tabular-nums;
+  }
+  input[type="range"] { width: clamp(120px, 24vw, 220px); accent-color: var(--accent); cursor: pointer; }
+
+  #fail {
+    position: fixed; inset: 0; display: none;
+    align-items: center; justify-content: center; text-align: center;
+    padding: 24px; font-size: 16px; line-height: 1.5; color: var(--dim);
+  }
+  #fail.show { display: flex; }
+</style>
+</head>
+<body>
+<canvas id="scene" aria-label="Трёхмерная крыса, вращающаяся по горизонтали"></canvas>
+
+<header>
+  <h1>Вращающаяся крыса</h1>
+  <div class="stats">
+    <span>оборотов</span><b id="turns">0</b>
+    <span class="sep">·</span>
+    <span class="live" id="live">0.00 об/с</span>
+  </div>
+</header>
+
+<footer>
+  <div class="hint" id="hint">Потяни крысу мышкой, чтобы раскрутить сильнее</div>
+  <div class="panel">
+    <button id="pause" aria-pressed="false" title="Пробел">Пауза</button>
+    <button id="reverse" title="R">Реверс</button>
+    <label class="speed">
+      <span>Скорость</span>
+      <input id="speed" type="range" min="0" max="5" step="0.05" value="0.4">
+      <output id="speedOut">0.40 об/с</output>
+    </label>
+    <button id="music" aria-pressed="false" title="M">Музыка</button>
+  </div>
+</footer>
+
+<div id="fail">Не удалось загрузить 3D-движок (Three.js).<br>Проверь подключение к интернету и обнови страницу.</div>
+
+<script type="module">
+const $ = (s) => document.querySelector(s);
+
+async function loadThree() {
+  const urls = [
+    'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js',
+    'https://unpkg.com/three@0.160.0/build/three.module.js',
+  ];
+  for (const u of urls) {
+    try { return await import(u); } catch (e) { /* пробуем следующий CDN */ }
+  }
+  throw new Error('three.js не загрузился');
+}
+
+let THREE;
+try {
+  THREE = await loadThree();
+} catch (e) {
+  $('#fail').classList.add('show');
+  throw e;
+}
+
+/* ───────────── Сцена ───────────── */
+const canvas = $('#scene');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.15;
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(32, 1, 0.1, 200);
+
+scene.add(new THREE.HemisphereLight(0xc4ccff, 0x1a1410, 0.75));
+
+const key = new THREE.DirectionalLight(0xfff0dc, 2.8);
+key.position.set(4, 7.5, 5);
+key.castShadow = true;
+key.shadow.mapSize.set(2048, 2048);
+key.shadow.camera.left = -5; key.shadow.camera.right = 5;
+key.shadow.camera.top = 5; key.shadow.camera.bottom = -5;
+key.shadow.camera.near = 1; key.shadow.camera.far = 25;
+key.shadow.bias = -0.0005;
+key.shadow.normalBias = 0.03;
+key.shadow.radius = 4;
+scene.add(key);
+
+const rim = new THREE.DirectionalLight(0x6f8cff, 2.2);
+rim.position.set(-5, 3.5, -6);
+scene.add(rim);
+
+const fill = new THREE.DirectionalLight(0xffb070, 0.5);
+fill.position.set(-4, 1.5, 5);
+scene.add(fill);
+
+/* Подиум */
+const R_STAGE = 4.0;
+const stage = new THREE.Mesh(
+  new THREE.CircleGeometry(R_STAGE, 96).rotateX(-Math.PI / 2),
+  new THREE.MeshStandardMaterial({ color: 0x15151b, roughness: 0.6, metalness: 0.1 })
+);
+stage.receiveShadow = true;
+scene.add(stage);
+
+const ring = new THREE.Mesh(
+  new THREE.TorusGeometry(R_STAGE, 0.018, 8, 160).rotateX(Math.PI / 2),
+  new THREE.MeshBasicMaterial({ color: 0xf7c948 })
+);
+ring.position.y = 0.01;
+scene.add(ring);
+
+/* ───────────── Крыса ───────────── */
+function furTexture() {
+  const c = document.createElement('canvas');
+  c.width = c.height = 512;
+  const g = c.getContext('2d');
+  g.fillStyle = '#d9d9d9';
+  g.fillRect(0, 0, 512, 512);
+  for (let i = 0; i < 9000; i++) {
+    const x = Math.random() * 512, y = Math.random() * 512;
+    const len = 6 + Math.random() * 18;
+    const l = 150 + Math.random() * 105 | 0;
+    g.strokeStyle = `rgba(${l},${l},${l},${0.25 + Math.random() * 0.35})`;
+    g.lineWidth = 0.6 + Math.random() * 1.2;
+    g.beginPath();
+    g.moveTo(x, y);
+    g.lineTo(x + (Math.random() - 0.5) * 3, y + len);
+    g.stroke();
+  }
+  return c;
+}
+const furCanvas = furTexture();
+function furMap(repX, repY, srgb) {
+  const t = new THREE.CanvasTexture(furCanvas);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.repeat.set(repX, repY);
+  if (srgb) t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 8;
+  return t;
+}
+
+const FUR = 0x8f8379, BELLY = 0xd6ccc0, PINK = 0xe59a9c, SNOUT = 0xc9aaa2;
+
+const bodyMat = new THREE.MeshStandardMaterial({
+  vertexColors: true, roughness: 0.9, metalness: 0,
+  map: furMap(7, 3, true), bumpMap: furMap(7, 3, false), bumpScale: 1.2,
+});
+const furMat = new THREE.MeshStandardMaterial({
+  color: FUR, roughness: 0.9, map: furMap(3, 2, true),
+});
+const pinkMat = new THREE.MeshStandardMaterial({ color: PINK, roughness: 0.6 });
+const eyeMat = new THREE.MeshStandardMaterial({ color: 0x050505, roughness: 0.08, metalness: 0.4 });
+const toothMat = new THREE.MeshStandardMaterial({ color: 0xf6efd9, roughness: 0.35 });
+
+const H = 0.98;                       // высота оси тела над полом
+const rat = new THREE.Group();        // вращается вокруг вертикальной оси
+const model = new THREE.Group();      // сама крыса, морда смотрит по +X
+model.position.x = 0.25;
+rat.add(model);
+scene.add(rat);
+
+function add(mesh, shadow = true) {
+  mesh.castShadow = shadow;
+  mesh.receiveShadow = true;
+  model.add(mesh);
+  return mesh;
+}
+function ellipsoid(mat, sx, sy, sz, x, y, z) {
+  const m = new THREE.Mesh(new THREE.SphereGeometry(1, 32, 20), mat);
+  m.scale.set(sx, sy, sz);
+  m.position.set(x, y, z);
+  return add(m);
+}
+
+/* Тело + голова — одно тело вращения вдоль оси X */
+{
+  const profile = new THREE.SplineCurve([
+    [0, -1.62], [0.42, -1.5], [0.78, -1.15], [0.96, -0.5], [0.9, 0.2],
+    [0.7, 0.85], [0.51, 1.3], [0.53, 1.68], [0.42, 2.0], [0.26, 2.32],
+    [0.13, 2.55], [0, 2.62],
+  ].map(([r, t]) => new THREE.Vector2(r, t))).getPoints(72);
+  profile.forEach((p) => { p.x = Math.max(0, p.x); });
+  profile[0].x = 0; profile[profile.length - 1].x = 0;
+
+  const geo = new THREE.LatheGeometry(profile, 56);
+  geo.rotateZ(-Math.PI / 2);
+  geo.scale(1, 0.92, 1);
+
+  const pos = geo.attributes.position;
+  const col = new Float32Array(pos.count * 3);
+  const cFur = new THREE.Color(FUR), cBelly = new THREE.Color(BELLY), cSnout = new THREE.Color(SNOUT);
+  const c = new THREE.Color();
+  const ss = THREE.MathUtils.smoothstep;
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
+    const r = Math.hypot(y, z);
+    const down = r > 1e-4 ? -y / r : 0;
+    c.copy(cFur).lerp(cBelly, ss(down, 0.3, 0.95));
+    c.lerp(cSnout, ss(x, 2.15, 2.6) * 0.8);
+    col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b;
+  }
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+
+  const body = add(new THREE.Mesh(geo, bodyMat));
+  body.position.y = H;
+}
+
+/* Бёдра, плечи, лапы */
+for (const s of [1, -1]) {
+  ellipsoid(furMat, 0.62, 0.56, 0.4, -0.55, H - 0.3, s * 0.68);   // бедро
+  ellipsoid(furMat, 0.34, 0.4, 0.27, 0.9, H - 0.5, s * 0.46);     // плечо
+  ellipsoid(pinkMat, 0.4, 0.085, 0.17, -0.3, 0.085, s * 0.8);     // задняя лапа
+  ellipsoid(pinkMat, 0.25, 0.07, 0.13, 1.08, 0.07, s * 0.5);      // передняя лапа
+}
+
+/* Уши */
+for (const s of [1, -1]) {
+  const ear = new THREE.Group();
+  ear.position.set(1.5, H + 0.52, s * 0.42);
+  ear.rotation.y = -s * 0.55;
+  ear.rotation.z = 0.25;
+  const outer = new THREE.Mesh(new THREE.SphereGeometry(0.36, 32, 20), furMat);
+  outer.scale.set(0.16, 1, 1);
+  const inner = new THREE.Mesh(new THREE.SphereGeometry(0.28, 32, 20), pinkMat);
+  inner.scale.set(0.12, 1, 1);
+  inner.position.x = 0.035;
+  outer.castShadow = true;
+  ear.add(outer, inner);
+  model.add(ear);
+}
+
+/* Глаза, нос, зубы */
+for (const s of [1, -1]) {
+  const eye = new THREE.Mesh(new THREE.SphereGeometry(0.085, 24, 16), eyeMat);
+  eye.position.set(1.98, H + 0.24, s * 0.31);
+  model.add(eye);
+  const tooth = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.11, 0.05), toothMat);
+  tooth.position.set(2.4, H - 0.2, s * 0.03);
+  model.add(tooth);
+}
+ellipsoid(pinkMat, 0.1, 0.09, 0.1, 2.62, H, 0);
+
+/* Усы */
+{
+  const pts = [];
+  for (const s of [1, -1]) {
+    const base = [2.38, H - 0.03, s * 0.16];
+    for (const tip of [[2.56, H + 0.2, s * 0.86], [2.62, H - 0.02, s * 0.92], [2.56, H - 0.22, s * 0.8]]) {
+      pts.push(...base, ...tip);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+  model.add(new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: 0xe8e4dc, transparent: true, opacity: 0.75 })));
+}
+
+/* Хвост — трубка, сужающаяся к кончику */
+{
+  const curve = new THREE.CatmullRomCurve3([
+    [-1.42, 0.78, 0], [-2.0, 0.36, 0.05], [-2.6, 0.14, 0.3],
+    [-3.1, 0.11, 0.8], [-3.2, 0.1, 1.4], [-2.9, 0.1, 1.9],
+  ].map((p) => new THREE.Vector3(...p)));
+  const TS = 90, RS = 12, R0 = 0.12, TAPER = 0.85;
+  const geo = new THREE.TubeGeometry(curve, TS, R0, RS, false);
+  const pos = geo.attributes.position;
+  const c = new THREE.Vector3(), v = new THREE.Vector3();
+  for (let i = 0; i <= TS; i++) {
+    curve.getPointAt(i / TS, c);
+    const k = 1 - TAPER * (i / TS);
+    for (let j = 0; j <= RS; j++) {
+      const idx = i * (RS + 1) + j;
+      v.fromBufferAttribute(pos, idx).sub(c).multiplyScalar(k).add(c);
+      pos.setXYZ(idx, v.x, v.y, v.z);
+    }
+  }
+  add(new THREE.Mesh(geo, pinkMat));
+  const tip = new THREE.Mesh(new THREE.SphereGeometry(R0 * (1 - TAPER), 10, 8), pinkMat);
+  tip.position.copy(curve.getPointAt(1));
+  model.add(tip);
+}
+
+/* ───────────── Камера и размер ───────────── */
+function resize() {
+  const w = window.innerWidth, h = window.innerHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  const half = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+  const d = Math.max(10.5, (R_STAGE + 0.35) / (half * camera.aspect));
+  camera.position.set(0, d * 0.34, d);
+  camera.lookAt(0, 0.3, 0);
+  camera.updateProjectionMatrix();
+}
+window.addEventListener('resize', resize);
+resize();
+
+/* ───────────── Вращение ───────────── */
+const TAU = Math.PI * 2;
+const state = {
+  speed: 0.4,      // об/с, задаётся ползунком
+  dir: 1,
+  paused: false,
+  vel: 0,          // текущая скорость, об/с (со знаком)
+  angle: 0,
+  turns: 0,
+  dragging: false,
+};
+
+const elTurns = $('#turns'), elLive = $('#live');
+const elSpeed = $('#speed'), elSpeedOut = $('#speedOut');
+const elPause = $('#pause'), elReverse = $('#reverse'), elMusic = $('#music');
+
+function setSpeed(v) {
+  state.speed = Math.min(5, Math.max(0, v));
+  elSpeed.value = state.speed;
+  elSpeedOut.textContent = state.speed.toFixed(2) + ' об/с';
+}
+function togglePause() {
+  state.paused = !state.paused;
+  elPause.setAttribute('aria-pressed', state.paused);
+  elPause.textContent = state.paused ? 'Крутить' : 'Пауза';
+}
+function reverse() { state.dir *= -1; }
+
+elSpeed.addEventListener('input', () => setSpeed(+elSpeed.value));
+elPause.addEventListener('click', togglePause);
+elReverse.addEventListener('click', reverse);
+
+/* Перетаскивание: крутим рукой, после отпускания — инерция */
+let lastX = 0, lastT = 0;
+canvas.addEventListener('pointerdown', (e) => {
+  state.dragging = true;
+  lastX = e.clientX; lastT = performance.now();
+  canvas.setPointerCapture(e.pointerId);
+  canvas.classList.add('dragging');
+  $('#hint').classList.add('gone');
+});
+canvas.addEventListener('pointermove', (e) => {
+  if (!state.dragging) return;
+  const now = performance.now();
+  const dA = (e.clientX - lastX) * 0.01;
+  const dt = Math.max(1, now - lastT) / 1000;
+  state.angle += dA;
+  state.turns += Math.abs(dA) / TAU;
+  const inst = dA / TAU / dt;
+  state.vel += (inst - state.vel) * 0.35;
+  lastX = e.clientX; lastT = now;
+});
+function endDrag() {
+  if (!state.dragging) return;
+  state.dragging = false;
+  canvas.classList.remove('dragging');
+  if (performance.now() - lastT > 120) state.vel = 0;   // отпустили неподвижную
+  state.vel = Math.max(-8, Math.min(8, state.vel));
+}
+canvas.addEventListener('pointerup', endDrag);
+canvas.addEventListener('pointercancel', endDrag);
+
+window.addEventListener('keydown', (e) => {
+  if (e.target instanceof HTMLInputElement) return;
+  if (e.code === 'Space') { e.preventDefault(); togglePause(); }
+  else if (e.code === 'KeyR') reverse();
+  else if (e.code === 'KeyM') toggleMusic();
+  else if (e.code === 'ArrowUp' || e.code === 'ArrowRight') setSpeed(state.speed + 0.1);
+  else if (e.code === 'ArrowDown' || e.code === 'ArrowLeft') setSpeed(state.speed - 0.1);
+});
+
+/* ───────────── Музыка (синтезируется на лету) ───────────── */
+let actx = null, master = null, bassBus = null, leadBus = null, noiseBuf = null;
+let musicOn = false, schedTimer = null, step = 0, nextT = 0;
+
+const midi = (n) => 440 * 2 ** ((n - 69) / 12);
+const CHORDS = [[57, 60, 64, 69], [53, 57, 60, 65], [48, 52, 55, 60], [55, 59, 62, 67]];
+const BASS = [45, 41, 36, 43];
+const ARP = [0, 1, 2, 3, 2, 1, 2, 1];
+const _ = null;
+const LEAD = [
+  76, _, _, 72, _, 74, _, 72, 69, _, _, _, 72, _, 74, _,
+  77, _, _, 76, _, 72, _, 69, 72, _, _, _, _, _, 69, 72,
+  76, _, _, 79, _, 76, _, 72, 74, _, 76, _, 79, _, _, _,
+  74, _, 71, _, 74, _, 79, _, 83, _, 81, _, 79, _, 74, _,
+];
+
+function tone(f, t, d, type, g, dest) {
+  const o = actx.createOscillator(), a = actx.createGain();
+  o.type = type; o.frequency.value = f;
+  a.gain.setValueAtTime(0.0001, t);
+  a.gain.linearRampToValueAtTime(g, t + 0.006);
+  a.gain.exponentialRampToValueAtTime(0.0001, t + d);
+  o.connect(a).connect(dest);
+  o.start(t); o.stop(t + d + 0.03);
+}
+function kick(t) {
+  const o = actx.createOscillator(), a = actx.createGain();
+  o.frequency.setValueAtTime(150, t);
+  o.frequency.exponentialRampToValueAtTime(42, t + 0.12);
+  a.gain.setValueAtTime(0.9, t);
+  a.gain.exponentialRampToValueAtTime(0.0001, t + 0.2);
+  o.connect(a).connect(master);
+  o.start(t); o.stop(t + 0.22);
+}
+function hat(t) {
+  const s = actx.createBufferSource(), f = actx.createBiquadFilter(), a = actx.createGain();
+  s.buffer = noiseBuf;
+  f.type = 'highpass'; f.frequency.value = 7000;
+  a.gain.setValueAtTime(0.16, t);
+  a.gain.exponentialRampToValueAtTime(0.0001, t + 0.045);
+  s.connect(f).connect(a).connect(master);
+  s.start(t); s.stop(t + 0.06);
+}
+function scheduleStep(s, t, sd) {
+  const bar = s >> 4, i = s & 15;
+  if (i % 4 === 0) kick(t);
+  if (i % 4 === 2) hat(t);
+  tone(midi(CHORDS[bar][ARP[i % 8]] + 12), t, sd * 0.95, 'triangle', 0.13, master);
+  if (i === 0 || i === 3 || i === 6 || i === 8 || i === 11 || i === 14) {
+    tone(midi(BASS[bar]), t, sd * 1.7, 'sawtooth', 0.22, bassBus);
+  }
+  const n = LEAD[s];
+  if (n) tone(midi(n), t, sd * 2.4, 'square', 0.075, leadBus);
+}
+function scheduler() {
+  while (nextT < actx.currentTime + 0.12) {
+    // темп следует за реальной скоростью вращения
+    const bpm = Math.min(250, 92 + 75 * Math.abs(state.vel));
+    const sd = 60 / bpm / 4;
+    scheduleStep(step, nextT, sd);
+    step = (step + 1) % 64;
+    nextT += sd;
+  }
+}
+function toggleMusic() {
+  musicOn = !musicOn;
+  elMusic.setAttribute('aria-pressed', musicOn);
+  if (musicOn) {
+    if (!actx) {
+      actx = new (window.AudioContext || window.webkitAudioContext)();
+      master = actx.createGain();
+      master.connect(actx.destination);
+      bassBus = actx.createBiquadFilter();
+      bassBus.type = 'lowpass'; bassBus.frequency.value = 520;
+      bassBus.connect(master);
+      leadBus = actx.createBiquadFilter();
+      leadBus.type = 'lowpass'; leadBus.frequency.value = 2600;
+      leadBus.connect(master);
+      noiseBuf = actx.createBuffer(1, actx.sampleRate * 0.1, actx.sampleRate);
+      const d = noiseBuf.getChannelData(0);
+      for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+    }
+    actx.resume();
+    master.gain.cancelScheduledValues(actx.currentTime);
+    master.gain.setValueAtTime(0.0001, actx.currentTime);
+    master.gain.linearRampToValueAtTime(0.32, actx.currentTime + 0.05);
+    step = 0;
+    nextT = actx.currentTime + 0.06;
+    schedTimer = setInterval(scheduler, 25);
+  } else {
+    clearInterval(schedTimer);
+    master.gain.cancelScheduledValues(actx.currentTime);
+    master.gain.setValueAtTime(master.gain.value, actx.currentTime);
+    master.gain.linearRampToValueAtTime(0.0001, actx.currentTime + 0.08);
+  }
+}
+elMusic.addEventListener('click', toggleMusic);
+
+/* ───────────── Цикл ───────────── */
+let prev = performance.now(), shownTurns = -1, shownLive = '';
+function frame(now) {
+  const dt = Math.min(0.1, (now - prev) / 1000);
+  prev = now;
+
+  if (!state.dragging) {
+    const target = state.paused ? 0 : state.dir * state.speed;
+    state.vel += (target - state.vel) * (1 - Math.exp(-dt * 2.2));
+    const dA = state.vel * TAU * dt;
+    state.angle += dA;
+    state.turns += Math.abs(dA) / TAU;
+  }
+  rat.rotation.y = state.angle;
+
+  const t = Math.floor(state.turns);
+  if (t !== shownTurns) { shownTurns = t; elTurns.textContent = t.toLocaleString('ru-RU'); }
+  const live = Math.abs(state.vel).toFixed(2) + ' об/с';
+  if (live !== shownLive) { shownLive = live; elLive.textContent = live; }
+
+  renderer.render(scene, camera);
+  requestAnimationFrame(frame);
+}
+setSpeed(state.speed);
+requestAnimationFrame(frame);
+
+// для отладки из консоли
+window.__rat = { state, rat };
+</script>
+</body>
+</html>
